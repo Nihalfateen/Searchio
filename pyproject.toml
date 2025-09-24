@@ -1,0 +1,60 @@
+[project]
+name = "SEARCHIO"
+version = "0.1.0"
+description = "Information Retrieval System for PRI 2025"
+authors = [
+    {name = "Nihal Fateen", email = "nihalahmedfateen@gmail.com"},
+    {name = "Eleftheriaa", email = "eleftheriaa@domain.com"}  # Replace with actual email if available
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pyarrow>=19.0.1",
+    "pydantic>=2.11.9",
+    "pydantic-core>=2.33.2",
+    "fastapi[standard]>=0.116.1",
+    "uvicorn>=0.35.0",
+    "psutil>=7.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.1.0",
+    "pyright>=1.1.0",
+    "pre-commit>=3.6.0",
+    "pyarrow-stubs>=20.0.0.20250825",
+]
+
+[project.scripts]
+cli = "SEARCHIO.entrypoints.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/SEARCHIO"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+ignore = ["COM812"]
+select = [
+  "C4", "COM", "D200", "D205", "D209", "D212",
+  "E", "F", "I", "PLR0402", "PT", "SIM",
+  "UP006", "UP007", "UP008", "UP015", "UP017",
+  "UP018", "UP032", "UP034", "UP040", "W291"
+]
+
+[tool.pyright]
+include = ["src"]
+exclude = ["**/__pycache__"]
+typeCheckingMode = "strict"
+reportImportCycles = false
+reportUnnecessaryCast = true
+reportUnnecessaryTypeIgnoreComment = true
+verboseOutput = true
+pythonVersion = "3.13"
+pythonPlatform = "All"
