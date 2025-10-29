@@ -1,11 +1,11 @@
 """Heterogenous memory monitor for Python. It should work in all OS."""
-import logging # use for structured logging
-import os # to interact with the operating system
-import threading # to create a background thread
-import time # to add delays between memory checks and sleep intervals
-from dataclasses import dataclass # to create a simple configuration class
+import logging  # use for structured logging
+import os  # to interact with the operating system
+import threading  # to create a background thread
+import time  # to add delays between memory checks and sleep intervals
+from dataclasses import dataclass  # to create a simple configuration class
 
-import psutil # to monitor system and process information
+import psutil  # to monitor system and process information
 
 logger = logging.getLogger(__name__)
 

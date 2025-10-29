@@ -8,9 +8,9 @@ ready to accept requests.
 
 """
 
-from sapien.core.logging import setup_logging
-from sapien.entrypoints.api.app import app
+# from sapien.core.logging import setup_logging
+# from sapien.entrypoints.api.app import app
 
-__all__ = ["app"]
+# __all__ = ["app"]
 
-setup_logging()
+# setup_logging()

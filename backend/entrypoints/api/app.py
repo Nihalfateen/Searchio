@@ -3,7 +3,6 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-
 from sapien.entrypoints.api.routes.healthcheck import router as healthcheck_router
 from sapien.entrypoints.api.routes.search import router as search_router
 
