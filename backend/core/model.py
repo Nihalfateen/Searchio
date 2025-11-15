@@ -1,9 +1,9 @@
 from pydantic import BaseModel
 
-
-class Document(BaseModel):
-    """Represents a single document in the search results."""
-
-    id: int
+class SearchResult(BaseModel):
+    """Single search result"""
+    doc_id: int
     title: str
-    content: str
+    text_snippet: str
+    score: float
+    url: str

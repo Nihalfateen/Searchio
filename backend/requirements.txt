@@ -1,0 +1,18 @@
+# FastAPI and server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+
+# NLTK for tokenization
+nltk==3.8.1
+
+# PyArrow for reading corpus
+pyarrow==14.0.2
+
+# Progress bars
+tqdm==4.66.1
+
+# Standard libraries (usually included but listed for clarity)
+# sqlite3 - comes with Python
+# json - comes with Python
+# pathlib - comes with Python

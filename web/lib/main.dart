@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:searchio/widgets/header_widget.dart';
+
+import 'widgets/search_page.dart';
+
 
 
 
@@ -25,34 +27,10 @@ class MyApp extends StatelessWidget {
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
           ),
-          home: const MyHomePage(title: 'Searchio'),
+          home: const SearchPage(),
         );
       },
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  final String title;
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      
-      body: SingleChildScrollView(
-          child: Column(
-        children: [
-          HeaderWidget()
-         
-        ],
-      )),
-    );
-  }
-}

@@ -1,105 +1,166 @@
-"""Search endpoints."""
-
-# from fastapi import APIRouter
-# from sapien.core.model import Document
-# from sapien.entrypoints.api.model import SearchResponse
-
-# router = APIRouter(tags=["search engine"])
-
-
-# @router.get("/search")
-# def search(query: str, num_results: int = 10) -> SearchResponse:
-#     """Search for documents matching the given query."""
-#     return SearchResponse(
-#         results=[
-#             Document(id=1, title="Document 1", content="Content 1"),
-#             Document(id=2, title="Document 2", content="Content 2"),
-#             Document(id=3, title="Document 3", content="Content 3"),
-#         ]
-#     )
-
-
-# @router.get("/search_like")
-# def search_like(doc_id: int, num_results: int = 10) -> SearchResponse:
-#     """Search for documents similar to the given document ID."""
-#     return SearchResponse(results=[])
-
-
-import os
 import sys
+import time
+from pathlib import Path
 
-from flask import Flask, jsonify, request
-from flask_cors import CORS
+from fastapi import APIRouter, HTTPException
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+import backend.entrypoints.asgi as asgi_module
+from backend.entrypoints.api.model import (
+    RelevanceFeedbackQuery,
+    SearchQuery,
+    SearchResponse,
+    SearchResult,
+)
 
-from backend.src.searcher.bm25_searcher import BM25Searcher
-from backend.src.searcher.relevance_feedback import RelevanceFeedback
-
-app = Flask(__name__)
-CORS(app)  # Enable CORS for Flutter app
-
-# Initialize searcher and relevance feedback
-searcher = None
-relevance_feedback = None
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 
-@app.before_request
-def initialize():
-    """Initialize searcher on first request."""
-    global searcher, relevance_feedback
+
+router = APIRouter(prefix="/search", tags=["Search"])
+
+
+@router.get("", response_model=SearchResponse)
+async def search_documents(search_query: str):
+    """Search documents using BM25"""
+
+    searcher = asgi_module.searcher
     if searcher is None:
-        print("🚀 Initializing searcher...")
-        searcher = BM25Searcher(index_dir="data/index")
-        relevance_feedback = RelevanceFeedback(index_dir="data/index")
-        print("✓ Searcher ready!")
+        raise HTTPException(status_code=503, detail="Search engine not initialized")
 
 
-@app.route('/search', methods=['GET'])
-def search():
-   
-    query = request.args.get('q', '')
-    top_k = int(request.args.get('k', 10))
+    if not search_query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+    try:
+        start_time = time.time()
+
+        results = searcher.search(query=search_query, verbose=False)
+
+        search_time = round(time.time() - start_time, 4)
+
+        
+        formatted_results = []
+        for r in results:
+            snippet = r["text"][:300].replace("\n", " ").strip()
+            if len(r["text"]) > 300:
+                snippet += "..."
+            formatted_results.append(
+                SearchResult(
+                    doc_id=r["doc_id"],
+                    title=r["title"],
+                    text_snippet=snippet,
+                    score=round(r["score"], 4),
+                    url=r["url"],
+                )
+            )
+
+       
+        return SearchResponse(
+            
+            query=search_query,
+            total_results=len(formatted_results),
+            results=formatted_results,
+            search_time=search_time,
+            parameters={
+                "k1": 1.2,
+                "b": 0.75,
+               
+                "top_k": len(results)
+            },
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
+
+@router.post("/similar", response_model=SearchResponse)
+async def search_similar_documents(feedback_query: RelevanceFeedbackQuery):
+    """Find similar documents (Relevance Feedback)"""
+ 
+    searcher = asgi_module.searcher
+    relevance_feedback = asgi_module.relevance_feedback
     
-    if not query:
-        return jsonify({"error": "Query parameter 'q' is required"}), 400
+    if searcher is None or relevance_feedback is None:
+        raise HTTPException(status_code=503, detail="Search engine not initialized")
     
-    results = searcher.search(query, top_k=top_k)
+    try:
+        start_time = time.time()
+        
+        # Update parameters
+        original_k1, original_b = searcher.k1, searcher.b
+        searcher.k1, searcher.b = feedback_query.k1, feedback_query.b
+        
+        # Find similar
+        results = relevance_feedback.find_similar(
+            searcher=searcher,
+            doc_id=feedback_query.doc_id,
+            top_k=feedback_query.top_k,
+            num_terms=feedback_query.num_terms
+        )
+        
+        # Restore parameters
+        searcher.k1, searcher.b = original_k1, original_b
+        
+        search_time = time.time() - start_time
+        
+        # Get source document
+        source_doc = searcher.doc_mapping.get(feedback_query.doc_id, {})
+        source_title = source_doc.get('title', f'Document {feedback_query.doc_id}')
+        
+        # Format results
+        formatted_results = []
+        for result in results:
+            text_snippet = result['text'][:300].replace('\n', ' ').strip()
+            if len(result['text']) > 300:
+                text_snippet += "..."
+            
+            formatted_results.append(SearchResult(
+                doc_id=result['doc_id'],
+                title=result['title'],
+                text_snippet=text_snippet,
+                score=round(result['score'], 4),
+                url=result['url']
+            ))
+        
+        return SearchResponse(
+            query=f"Similar to: {source_title}",
+            total_results=len(formatted_results),
+            results=formatted_results,
+            search_time=round(search_time, 4),
+            parameters={
+                "doc_id": feedback_query.doc_id,
+                "k1": feedback_query.k1,
+                "b": feedback_query.b,
+                "top_k": feedback_query.top_k,
+                "num_terms": feedback_query.num_terms
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/document/{doc_id}")
+async def get_document(doc_id: int):
+    """Get full document by ID"""
+    searcher = asgi_module.searcher
     
-    return jsonify({
-        "query": query,
-        "num_results": len(results),
-        "results": results
-    })
-
-
-@app.route('/similar/<int:doc_id>', methods=['GET'])
-def similar(doc_id):
-   
-    top_k = int(request.args.get('k', 10))
+    if searcher is None:
+        raise HTTPException(status_code=503, detail="Search engine not initialized")
     
-    results = relevance_feedback.find_similar(doc_id, top_k=top_k)
-    
-    return jsonify({
-        "doc_id": doc_id,
-        "num_results": len(results),
-        "results": results
-    })
+    try:
+        if doc_id not in searcher.doc_mapping:
+            raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+        
+        doc_info = searcher.doc_mapping[doc_id]
+        doc_text = searcher._get_document_text(doc_id)
+        
+        return {
+            "doc_id": doc_id,
+            "title": doc_info['title'],
+            "text": doc_text,
+            "length": searcher.doc_lengths.get(doc_id, 0),
+            "url": f"https://pt.wikipedia.org/wiki/{doc_info['title'].replace(' ', '_')}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-
-@app.route('/health', methods=['GET'])
-def health():
-    """Health check endpoint."""
-    return jsonify({"status": "ok", "message": "Searcher API is running"})
-
-
-if __name__ == "__main__":
-    print("=" * 70)
-    print("STARTING SEARCHER API")
-    print("=" * 70)
-    print("Endpoints:")
-    print("  GET /search?q=<query>&k=<num_results>")
-    print("  GET /similar/<doc_id>?k=<num_results>")
-    print("  GET /health")
-    print("=" * 70)
-    app.run(host='0.0.0.0', port=5000, debug=True)

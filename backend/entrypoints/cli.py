@@ -1,9 +1,8 @@
-
 import logging
 
-from core.limit_memory import start_memory_monitor
-from core.logging import setup_logging
-from src.indexer.indexer import IndexBuilder
+from backend.core.limit_memory import start_memory_monitor
+from backend.core.logging import setup_logging
+from backend.src.indexer.indexer import IndexBuilder
 
 if __name__ == "__main__":
    
@@ -15,7 +14,7 @@ if __name__ == "__main__":
     start_memory_monitor(show_memory_updates=True)
     logger.info("Memory monitor started (2GB limit)")
 
-    corpus_path = r"d:\ptwiki-articles-with-redirects.arrow"
+    corpus_path = r"/Users/nihalfateen/Downloads/ptwiki-articles-with-redirects.arrow"
 
     builder = IndexBuilder(
         corpus_path=corpus_path,

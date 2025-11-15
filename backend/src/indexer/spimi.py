@@ -1,27 +1,41 @@
+# indexer/spimi_indexer.py
 import heapq
 import json
-import os
 from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List
 
 
 class SPIMIIndexer:
-    def __init__(self, block_dir="index_blocks", block_limit=100000):
-        self.block_dir = block_dir
-        os.makedirs(block_dir, exist_ok=True)
+    """
+    SPIMI positional index with block flushing + k-way merge.
+    - Keeps lexicographic order of terms.
+    - Keeps postings sorted by doc_id and positions.
+    - Applies min_term_freq at merge time.
+    - Emits term_offsets.json for fast on-demand searchers.
+    """
+
+    def __init__(self, block_dir: str = "index_blocks", block_limit: int = 100000):
+        self.block_dir = Path(block_dir)
+        self.block_dir.mkdir(parents=True, exist_ok=True)
         self.block_limit = block_limit
 
-        self.term_dict = defaultdict(list)
+        # in-memory partial dictionary: term -> list[[doc_id, [pos...]], ...]
+        self.term_dict: Dict[str, List[List]] = defaultdict(list)
         self.block_count = 0
 
-        # Statistics
+        # stats
         self.total_docs_indexed = 0
         self.total_terms_seen = 0
 
-    def add_document(self, doc_id, tokens):
+    def add_document(self, doc_id: int, tokens):
+        """
+        Add a document tokens stream (already tokenized) and record positions.
+        Positions are indices in the filtered token stream (consistent with query pipeline).
+        """
         token_list = list(tokens)
-
         for pos, term in enumerate(token_list):
-            # إذا نفس الـ doc_id موجود بالفعل
+            # Fast append; if same doc repeats consecutively for this term, append pos only
             if self.term_dict[term] and self.term_dict[term][-1][0] == doc_id:
                 self.term_dict[term][-1][1].append(pos)
             else:
@@ -30,116 +44,134 @@ class SPIMIIndexer:
         self.total_docs_indexed += 1
         self.total_terms_seen += len(token_list)
 
+        # Flush by number of distinct terms
         if len(self.term_dict) > self.block_limit:
             self._write_block()
 
     def _write_block(self):
+        """
+        Write a block as JSONL:
+          [term, [[doc_id, [pos...]], ...]]
+        Ensures postings sorted by doc_id and positions within the block.
+        """
         if not self.term_dict:
             return
 
-        block_path = os.path.join(self.block_dir, f"block_{self.block_count}.json")
+        block_path = self.block_dir / f"block_{self.block_count}.jsonl"
         with open(block_path, "w", encoding="utf-8") as f:
             for term in sorted(self.term_dict.keys()):
                 postings = self.term_dict[term]
-                f.write(json.dumps([term, postings], ensure_ascii=False) + "\n")
+                # sort by doc_id, and ensure positions sorted
+                postings_sorted = []
+                for did, poss in postings:
+                    postings_sorted.append([did, sorted(poss)])
+                postings_sorted.sort(key=lambda x: x[0])
+                f.write(json.dumps([term, postings_sorted], ensure_ascii=False) + "\n")
 
-        print(f"Block {self.block_count} written ({len(self.term_dict)} terms)")
+        print(f"Block {self.block_count} written ({len(self.term_dict)} terms) -> {block_path}")
         self.term_dict.clear()
         self.block_count += 1
 
     def finalize(self):
+        """Flush last block if present."""
         if self.term_dict:
             self._write_block()
         print(f"Indexing complete: {self.block_count} blocks created")
 
-    @staticmethod
-    def merge_posting_lists(p1, p2):
-        
-        result = []
-        # جمع doc_freq
-        result.append(p1[0] + p2[0])
-
-        new_posting_list = dict()
-        [new_posting_list.update(d) for d in (p1[1], p2[1])]
-
-        # ترتيب docIDs تصاعديًا
-        for doc_id in sorted(new_posting_list.keys()):
-            result.append(doc_id)
-            term_freq = new_posting_list[doc_id][0]
-            result.append(term_freq)
-            for i in range(term_freq):
-                result.append(new_posting_list[doc_id][1][i])
-        return result
-
-    def merge_blocks(self, output_path="final_index.json", min_term_freq=3):
+    def merge_blocks(self, output_path: str = "final_index.jsonl", min_term_freq: int = 3):
+        """
+        K-way merge for sorted blocks. Produces:
+          - final_index.jsonl (JSON Lines; one [term, postings] per line)
+          - term_offsets.json  (term -> byte offset into final_index.jsonl)
+        Keeps doc_id order ascending; merges duplicate doc entries; applies min_term_freq.
+        """
         if self.block_count == 0:
             return None, {}
 
+        # Open all block files
         block_files = []
         for i in range(self.block_count):
-            block_path = os.path.join(self.block_dir, f"block_{i}.json")
+            block_path = self.block_dir / f"block_{i}.jsonl"
             block_files.append(open(block_path, "r", encoding="utf-8"))
 
+        # Min-heap by term
         heap = []
-        for block_idx, block_file in enumerate(block_files):
-            line = block_file.readline()
+        for idx, fp in enumerate(block_files):
+            line = fp.readline()
             if line.strip():
                 term, postings = json.loads(line)
-                heapq.heappush(heap, (term, postings, block_idx))
+                heapq.heappush(heap, (term, idx, postings))
 
         current_term = None
-        current_postings = []
+        accum_postings = []  # [[doc_id, [pos...]], ...]
+
         term_stats = {}
         terms_written = 0
         terms_filtered = 0
 
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        term_offsets = {}
+
         with open(output_path, "w", encoding="utf-8") as out_f:
-            while heap:
-                term, postings, block_idx = heapq.heappop(heap)
+            def flush_term(term: str, postings: List[List]):
+                nonlocal terms_written, terms_filtered
+                # Merge duplicates by doc_id
+                by_doc = defaultdict(list)
+                for did, poss in postings:
+                    by_doc[did].extend(poss)
 
-                if term == current_term:
-                    current_postings.extend(postings)
-                else:
-                    if current_term is not None:
-                        # حساب total_freq
-                        total_freq = sum(len(pos_list) for _, pos_list in current_postings)
-                        if total_freq >= min_term_freq:
-                            out_f.write(json.dumps([current_term, current_postings], ensure_ascii=False) + "\n")
-                            term_stats[current_term] = {
-                                "doc_freq": len(current_postings),
-                                "term_freq": total_freq
-                            }
-                            terms_written += 1
-                        else:
-                            terms_filtered += 1
+                final_postings = []
+                total_tf = 0
+                for did in sorted(by_doc.keys()):
+                    poss = sorted(by_doc[did])
+                    total_tf += len(poss)
+                    final_postings.append([did, poss])
 
-                    current_term = term
-                    current_postings = postings
-
-                # قراءة السطر التالي من نفس block
-                line = block_files[block_idx].readline()
-                if line.strip():
-                    next_term, next_postings = json.loads(line)
-                    heapq.heappush(heap, (next_term, next_postings, block_idx))
-
-            # كتابة آخر term
-            if current_term is not None:
-                total_freq = sum(len(pos_list) for _, pos_list in current_postings)
-                if total_freq >= min_term_freq:
-                    out_f.write(json.dumps([current_term, current_postings], ensure_ascii=False) +"\n")
-                    term_stats[current_term] = {
-                        "doc_freq": len(current_postings),
-                        "term_freq": total_freq
+                if total_tf >= min_term_freq:
+                    term_offsets[term] = out_f.tell()
+                    out_f.write(json.dumps([term, final_postings], ensure_ascii=False) + "\n")
+                    term_stats[term] = {
+                        "doc_freq": len(final_postings),
+                        "term_freq": total_tf
                     }
                     terms_written += 1
                 else:
                     terms_filtered += 1
 
-        for f in block_files:
-            f.close()
+            while heap:
+                term, bidx, postings = heapq.heappop(heap)
+                if current_term is None:
+                    current_term = term
+                    accum_postings = postings
+                elif term == current_term:
+                    accum_postings.extend(postings)
+                else:
+                    flush_term(current_term, accum_postings)
+                    current_term = term
+                    accum_postings = postings
+
+                # advance this block
+                nxt = block_files[bidx].readline()
+                if nxt.strip():
+                    nterm, npost = json.loads(nxt)
+                    heapq.heappush(heap, (nterm, bidx, npost))
+
+            if current_term is not None:
+                flush_term(current_term, accum_postings)
+
+        for fp in block_files:
+            fp.close()
+
+        # Write offsets alongside final index
+        offsets_path = output_path.parent / "term_offsets.json"
+        with open(offsets_path, "w", encoding="utf-8") as f:
+            json.dump(term_offsets, f, ensure_ascii=False)
 
         print("Merge complete!")
         print(f"Terms kept: {terms_written}")
-        print(f"Terms filtered: {terms_filtered}")
+        print(f"Terms filtered (< min_term_freq): {terms_filtered}")
+        print(f"Final index: {output_path}")
+        print(f"Term offsets: {offsets_path}")
 
-        return output_path, term_stats
+        return str(output_path), term_stats
