@@ -25,7 +25,7 @@ The project provides practical experience with:
 
 Project Structure
 
-Assignment 1/
+```text
 ├── backend/
 │   ├── core/
 │   │   ├── limit_memory.py       # Memory monitor (2GB limit)
@@ -78,7 +78,7 @@ Assignment 1/
 │   └── pubspec.yaml
 │
 └── README.md
-
+```
 ⸻⸻⸻⸻⸻⸻⸻⸻⸻⸻
 
 How to Run
