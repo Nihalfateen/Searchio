@@ -91,11 +91,11 @@ How to Run
 	Download the Portuguese Wikipedia dataset "ptwiki-articles-with-redirects.arrow", from this link:
 	https://www.dropbox.com/scl/fi/5jgmnyb6r6fqz1jheqogn/ptwiki-articles-with-redirects.arrow?rlkey=fp888qbb0v1urffhw5lcqlppd&st=prqkboqd&dl=0
 	and place it inside the Assignment 1/ directory, next to the backend/ folder like this:
-	Assignment 1/
+	```text
 	├── backend/
 	├── web/
 	└── ptwiki-articles-with-redirects.arrow
-
+    ```
 4. Set up the environment
 
    cd backend
